@@ -88,6 +88,8 @@ def init_db():
         conn.commit()
         cursor.close()
         conn.close()
+        return True
+    return False
 
 # --- FUNCIONES DE USUARIO Y CIFRADO ---
 def registrar_usuario(telegram_id, moodle_url):

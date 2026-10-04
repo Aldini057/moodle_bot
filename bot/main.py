@@ -49,7 +49,7 @@ def obtener_tareas_con_cache(enlace, telegram_id):
 async def comando_start(message: types.Message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        usuario_existente = obtener_usuario(message.from_user.id)
+        usuario_existente = await asyncio.to_thread(obtener_usuario, message.from_user.id)
         if usuario_existente:
             await message.answer(
                 "¡Hola de nuevo! Ya tienes un enlace de Moodle registrado.\n\n"
@@ -67,7 +67,7 @@ async def comando_start(message: types.Message):
     moodle_url = args[1]
     telegram_id = message.from_user.id
 
-    if registrar_usuario(telegram_id, moodle_url):
+    if await asyncio.to_thread(registrar_usuario, telegram_id, moodle_url):
         await message.answer("✅ ¡Enlace de Moodle registrado y cifrado con éxito!\n\nUsa /pendientes para consultar tus entregas.")
     else:
         await message.answer("❌ Hubo un error al guardar tu enlace en la base de datos.")
@@ -76,7 +76,7 @@ async def comando_start(message: types.Message):
 @dp.message(F.text == "/pendientes")
 async def comando_pendientes(message: types.Message):
     telegram_id = message.from_user.id
-    enlace = obtener_usuario(telegram_id)
+    enlace = await asyncio.to_thread(obtener_usuario, telegram_id)
 
     if not enlace:
         await message.answer("⚠️ Aún no has registrado tu enlace. Usa <code>/start [tu_enlace]</code> para configurarlo.", parse_mode="HTML")
@@ -84,7 +84,7 @@ async def comando_pendientes(message: types.Message):
 
     await message.answer("🔄 Sincronizando con Moodle y base de datos...")
 
-    tareas, fecha_cache = obtener_tareas_con_cache(enlace, telegram_id)
+    tareas, fecha_cache = await asyncio.to_thread(obtener_tareas_con_cache, enlace, telegram_id)
 
     if tareas is None:
         await message.answer("❌ Hubo un error al intentar leer tu calendario y no hay caché disponible.")
@@ -123,13 +123,13 @@ async def comando_pendientes(message: types.Message):
 @dp.message(F.text == "/hoy")
 async def comando_hoy(message: types.Message):
     telegram_id = message.from_user.id
-    enlace = obtener_usuario(telegram_id)
+    enlace = await asyncio.to_thread(obtener_usuario, telegram_id)
 
     if not enlace:
         await message.answer("⚠️ Registra tu enlace primero con /start.")
         return
 
-    tareas, fecha_cache = obtener_tareas_con_cache(enlace, telegram_id)
+    tareas, fecha_cache = await asyncio.to_thread(obtener_tareas_con_cache, enlace, telegram_id)
     if tareas is None:
         await message.answer("❌ Hubo un error al intentar leer tu calendario y no hay caché disponible.")
         return
@@ -170,7 +170,7 @@ async def callback_marcar_entregado(callback: types.CallbackQuery):
     uid_tarea = callback.data.split("_")[1]
     telegram_id = callback.from_user.id
 
-    marcar_tarea_entregada(telegram_id, uid_tarea)
+    await asyncio.to_thread(marcar_tarea_entregada, telegram_id, uid_tarea)
     
     await callback.message.edit_text(
         # html_text conserva el formato original (y lo escapa); .text lo perdería
@@ -184,7 +184,7 @@ async def callback_marcar_entregado(callback: types.CallbackQuery):
 @dp.message(F.text == "/estado")
 async def comando_estado(message: types.Message):
     telegram_id = message.from_user.id
-    enlace = obtener_usuario(telegram_id)
+    enlace = await asyncio.to_thread(obtener_usuario, telegram_id)
 
     if not enlace:
         await message.answer("⚠️ No tienes ningún enlace registrado.")
@@ -192,7 +192,7 @@ async def comando_estado(message: types.Message):
 
     import requests
     try:
-        response = requests.get(enlace, timeout=5)
+        response = await asyncio.to_thread(requests.get, enlace, timeout=5)
         if response.status_code == 200:
             await message.answer("🟢 <b>Estado:</b> Tu enlace de Moodle responde correctamente. Sincronización activa.", parse_mode="HTML")
         else:
@@ -204,7 +204,7 @@ async def comando_estado(message: types.Message):
 @dp.message(F.text == "/olvidar")
 async def comando_olvidar(message: types.Message):
     telegram_id = message.from_user.id
-    if eliminar_usuario(telegram_id):
+    if await asyncio.to_thread(eliminar_usuario, telegram_id):
         await message.answer("🗑️ <b>Datos borrados.</b> Tu ID, enlace cifrado y registros fueron eliminados.", parse_mode="HTML")
     else:
         await message.answer("⚠️ No tenías datos registrados previamente.")
@@ -216,7 +216,7 @@ async def comando_stats(message: types.Message):
         await message.answer("⛔ Comando no autorizado.")
         return
 
-    stats = obtener_estadisticas()
+    stats = await asyncio.to_thread(obtener_estadisticas)
     await message.answer(
         f"📊 <b>Estadísticas del Servidor:</b>\n\n"
         f"👤 Usuarios registrados: <code>{stats['usuarios']}</code>\n"
@@ -228,7 +228,10 @@ async def comando_stats(message: types.Message):
 # --- ARRANQUE Y SCHEDULER ---
 async def main():
     print("Inicializando base de datos...")
-    init_db()
+    if not init_db():
+        # Salimos con error para que Docker reinicie el contenedor, en vez de
+        # seguir corriendo sin tablas.
+        raise SystemExit("No se pudo conectar a la base de datos para inicializarla.")
     
     # ⏱️ Arrancamos el planificador automático en segundo plano
     iniciar_scheduler(bot)

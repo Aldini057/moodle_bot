@@ -16,7 +16,7 @@ def iniciar_scheduler(bot):
     # Función que evaluará las tareas de todos los usuarios
     async def verificar_alertas_automaticas():
         logging.info("🤖 Ejecutando revisión automática de tareas en segundo plano...")
-        usuarios = obtener_todos_los_usuarios()
+        usuarios = await asyncio.to_thread(obtener_todos_los_usuarios)
         
         if not usuarios:
             return
@@ -25,15 +25,15 @@ def iniciar_scheduler(bot):
         zona_mexico = ZoneInfo("America/Mexico_City")
 
         for telegram_id in usuarios:
-            enlace = obtener_usuario(telegram_id)
+            enlace = await asyncio.to_thread(obtener_usuario, telegram_id)
             if not enlace:
                 continue
 
-            tareas = obtener_tareas_pendientes(enlace, telegram_id)
+            tareas = await asyncio.to_thread(obtener_tareas_pendientes, enlace, telegram_id)
             if not tareas:
                 continue
 
-            ya_avisadas = obtener_alertas_enviadas(telegram_id)
+            ya_avisadas = await asyncio.to_thread(obtener_alertas_enviadas, telegram_id)
             urgentes_por_avisar = []
 
             for tarea in tareas:
@@ -57,7 +57,7 @@ def iniciar_scheduler(bot):
                 
                 try:
                     await bot.send_message(chat_id=telegram_id, text=mensaje, parse_mode="HTML")
-                    registrar_alertas(telegram_id, [(t['uid'], t['fecha']) for t, _ in urgentes_por_avisar])
+                    await asyncio.to_thread(registrar_alertas, telegram_id, [(t['uid'], t['fecha']) for t, _ in urgentes_por_avisar])
                     logging.info(f"Alerta enviada con éxito al usuario {telegram_id}")
                 except Exception as e:
                     logging.error(f"No se pudo enviar alerta al usuario {telegram_id}: {e}")
