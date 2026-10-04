@@ -65,6 +65,17 @@ def init_db():
             )
         ''')
 
+        # 5. Alertas automáticas ya enviadas (para no repetir ni saltarse avisos)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS alertas_enviadas (
+                telegram_id BIGINT,
+                id_tarea TEXT,
+                fecha_limite TEXT,
+                fecha_envio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (telegram_id, id_tarea, fecha_limite)
+            )
+        ''')
+
         # 4. NUEVA: Tabla de Caché (Resiliencia si Moodle se cae)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS cache_calendario (
@@ -133,6 +144,7 @@ def eliminar_usuario(telegram_id):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM tareas_entregadas WHERE telegram_id = %s", (telegram_id,))
         cursor.execute("DELETE FROM cache_calendario WHERE telegram_id = %s", (telegram_id,))
+        cursor.execute("DELETE FROM alertas_enviadas WHERE telegram_id = %s", (telegram_id,))
         cursor.execute("DELETE FROM usuarios WHERE telegram_id = %s", (telegram_id,))
         conn.commit()
         cursor.close()
@@ -195,6 +207,34 @@ def obtener_tareas_entregadas(telegram_id):
         conn.close()
         return [row[0] for row in resultados]
     return []
+
+# --- FUNCIONES DE ALERTAS ---
+def obtener_alertas_enviadas(telegram_id):
+    """Pares (id_tarea, fecha_limite) que ya se le avisaron al usuario."""
+    conn = get_db_connection()
+    if conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id_tarea, fecha_limite FROM alertas_enviadas WHERE telegram_id = %s", (telegram_id,))
+        resultados = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return {(row[0], row[1]) for row in resultados}
+    return set()
+
+def registrar_alertas(telegram_id, alertas):
+    """Guarda los pares (id_tarea, fecha_limite) avisados para no repetirlos."""
+    conn = get_db_connection()
+    if conn:
+        cursor = conn.cursor()
+        for id_tarea, fecha_limite in alertas:
+            cursor.execute('''
+                INSERT INTO alertas_enviadas (telegram_id, id_tarea, fecha_limite)
+                VALUES (%s, %s, %s)
+                ON CONFLICT DO NOTHING
+            ''', (telegram_id, id_tarea, fecha_limite))
+        conn.commit()
+        cursor.close()
+        conn.close()
 
 # --- FUNCIONES DE CACHÉ ---
 def guardar_cache(telegram_id, datos_json):

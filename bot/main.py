@@ -23,6 +23,26 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
+zona_mexico = ZoneInfo("America/Mexico_City")
+
+def obtener_tareas_con_cache(enlace, telegram_id):
+    """Tareas frescas de Moodle; si Moodle falla, la última copia guardada.
+
+    Devuelve (tareas, fecha_cache): fecha_cache es None si los datos son frescos,
+    y tareas es None si no hay ni Moodle ni caché.
+    """
+    tareas = obtener_tareas_pendientes(enlace, telegram_id)
+    if tareas is not None:
+        return tareas, None
+
+    datos_cache, fecha_cache = obtener_cache(telegram_id)
+    if datos_cache is None:
+        return None, None
+    # La columna es TIMESTAMP sin zona; Postgres la guarda en UTC
+    if fecha_cache.tzinfo is None:
+        fecha_cache = fecha_cache.replace(tzinfo=timezone.utc)
+    return datos_cache, fecha_cache.astimezone(zona_mexico)
+
 # --- COMANDO START ---
 @dp.message(CommandStart())
 async def comando_start(message: types.Message):
@@ -63,24 +83,18 @@ async def comando_pendientes(message: types.Message):
 
     await message.answer("🔄 Sincronizando con Moodle y base de datos...")
 
-    tareas = obtener_tareas_pendientes(enlace, telegram_id)
-    
+    tareas, fecha_cache = obtener_tareas_con_cache(enlace, telegram_id)
+
     if tareas is None:
-        datos_cache, fecha_cache = obtener_cache(telegram_id)
-        if datos_cache:
-            zona_mexico = ZoneInfo("America/Mexico_City")
-            fecha_str = datetime.fromisoformat(fecha_cache).astimezone(zona_mexico).strftime("%d/%m/%Y a las %H:%M")
-            await message.answer(f"⚠️ **Moodle no responde.** Mostrando tu última copia de seguridad guardada el {fecha_str}:", parse_mode="Markdown")
-            tareas = datos_cache
-        else:
-            await message.answer("❌ Hubo un error al intentar leer tu calendario y no hay caché disponible.")
-            return
+        await message.answer("❌ Hubo un error al intentar leer tu calendario y no hay caché disponible.")
+        return
+    if fecha_cache:
+        fecha_str = fecha_cache.strftime("%d/%m/%Y a las %H:%M")
+        await message.answer(f"⚠️ **Moodle no responde.** Mostrando tu última copia de seguridad guardada el {fecha_str}:", parse_mode="Markdown")
 
     if len(tareas) == 0:
         await message.answer("🎉 ¡No tienes tareas pendientes en los próximos 14 días! Todo al día.")
         return
-
-    zona_mexico = ZoneInfo("America/Mexico_City")
 
     for tarea in tareas:
         fecha_local = datetime.fromisoformat(tarea['fecha']).astimezone(zona_mexico)
@@ -112,13 +126,18 @@ async def comando_hoy(message: types.Message):
         await message.answer("⚠️ Registra tu enlace primero con /start.")
         return
 
-    tareas = obtener_tareas_pendientes(enlace, telegram_id)
+    tareas, fecha_cache = obtener_tareas_con_cache(enlace, telegram_id)
+    if tareas is None:
+        await message.answer("❌ Hubo un error al intentar leer tu calendario y no hay caché disponible.")
+        return
+    if fecha_cache:
+        fecha_str = fecha_cache.strftime("%d/%m/%Y a las %H:%M")
+        await message.answer(f"⚠️ **Moodle no responde.** Usando tu última copia de seguridad guardada el {fecha_str}.", parse_mode="Markdown")
     if not tareas:
         await message.answer("🎉 No hay tareas pendientes.")
         return
 
     ahora_utc = datetime.now(timezone.utc)
-    zona_mexico = ZoneInfo("America/Mexico_City")
     urgentes = []
 
     for tarea in tareas:
