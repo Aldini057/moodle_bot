@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from html import escape
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -48,14 +49,14 @@ def iniciar_scheduler(bot):
                     urgentes_por_avisar.append((tarea, fecha_obj.astimezone(zona_mexico)))
 
             if urgentes_por_avisar:
-                mensaje = "⚠️ **¡Alerta de Cierre Próximo!**\nTe quedan menos de 24 horas para entregar lo siguiente:\n\n"
+                mensaje = "⚠️ <b>¡Alerta de Cierre Próximo!</b>\nTe quedan menos de 24 horas para entregar lo siguiente:\n\n"
                 for tarea, fecha_local in urgentes_por_avisar:
-                    mensaje += f"🔹 *{tarea['materia']}*\n"
-                    mensaje += f"📝 {tarea['titulo']}\n"
+                    mensaje += f"🔹 <b>{escape(tarea['materia'])}</b>\n"
+                    mensaje += f"📝 {escape(tarea['titulo'])}\n"
                     mensaje += f"🔴 Límite: {fecha_local.strftime('%d/%m/%Y a las %H:%M')}\n\n"
                 
                 try:
-                    await bot.send_message(chat_id=telegram_id, text=mensaje, parse_mode="Markdown")
+                    await bot.send_message(chat_id=telegram_id, text=mensaje, parse_mode="HTML")
                     registrar_alertas(telegram_id, [(t['uid'], t['fecha']) for t, _ in urgentes_por_avisar])
                     logging.info(f"Alerta enviada con éxito al usuario {telegram_id}")
                 except Exception as e:

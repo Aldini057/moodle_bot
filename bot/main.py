@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from html import escape
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from aiogram import Bot, Dispatcher, types, F
@@ -58,8 +59,8 @@ async def comando_start(message: types.Message):
             await message.answer(
                 "👋 ¡Bienvenido a tu Bot Académico de Moodle!\n\n"
                 "Para empezar, envíame tu enlace de calendario de Moodle con este formato:\n"
-                "`/start https://mi.cugdl.udg.mx/calendar/export_secure.php?...`",
-                parse_mode="Markdown"
+                "<code>/start https://mi.cugdl.udg.mx/calendar/export_secure.php?...</code>",
+                parse_mode="HTML"
             )
         return
 
@@ -78,7 +79,7 @@ async def comando_pendientes(message: types.Message):
     enlace = obtener_usuario(telegram_id)
 
     if not enlace:
-        await message.answer("⚠️ Aún no has registrado tu enlace. Usa `/start [tu_enlace]` para configurarlo.", parse_mode="Markdown")
+        await message.answer("⚠️ Aún no has registrado tu enlace. Usa <code>/start [tu_enlace]</code> para configurarlo.", parse_mode="HTML")
         return
 
     await message.answer("🔄 Sincronizando con Moodle y base de datos...")
@@ -90,7 +91,7 @@ async def comando_pendientes(message: types.Message):
         return
     if fecha_cache:
         fecha_str = fecha_cache.strftime("%d/%m/%Y a las %H:%M")
-        await message.answer(f"⚠️ **Moodle no responde.** Mostrando tu última copia de seguridad guardada el {fecha_str}:", parse_mode="Markdown")
+        await message.answer(f"⚠️ <b>Moodle no responde.</b> Mostrando tu última copia de seguridad guardada el {fecha_str}:", parse_mode="HTML")
 
     if len(tareas) == 0:
         await message.answer("🎉 ¡No tienes tareas pendientes en los próximos 14 días! Todo al día.")
@@ -100,8 +101,10 @@ async def comando_pendientes(message: types.Message):
         fecha_local = datetime.fromisoformat(tarea['fecha']).astimezone(zona_mexico)
         fecha_formato = fecha_local.strftime("%d/%m/%Y %H:%M")
         
-        texto = f"🔹 *{tarea['materia']}*\n"
-        texto += f"📝 {tarea['titulo']}\n"
+        # Los títulos y materias vienen de Moodle: se escapan para que
+        # caracteres como < o & no rompan el formato del mensaje.
+        texto = f"🔹 <b>{escape(tarea['materia'])}</b>\n"
+        texto += f"📝 {escape(tarea['titulo'])}\n"
         
         if tarea['tipo_evento'] == "abre":
             texto += f"🟢 Disponible desde: {fecha_formato}\n"
@@ -114,7 +117,7 @@ async def comando_pendientes(message: types.Message):
             [InlineKeyboardButton(text="✅ Marcar como Entregado", callback_data=f"done_{tarea['uid']}")]
         ])
 
-        await message.answer(texto, parse_mode="Markdown", reply_markup=teclado)
+        await message.answer(texto, parse_mode="HTML", reply_markup=teclado)
 
 # --- COMANDO /HOY ---
 @dp.message(F.text == "/hoy")
@@ -132,7 +135,7 @@ async def comando_hoy(message: types.Message):
         return
     if fecha_cache:
         fecha_str = fecha_cache.strftime("%d/%m/%Y a las %H:%M")
-        await message.answer(f"⚠️ **Moodle no responde.** Usando tu última copia de seguridad guardada el {fecha_str}.", parse_mode="Markdown")
+        await message.answer(f"⚠️ <b>Moodle no responde.</b> Usando tu última copia de seguridad guardada el {fecha_str}.", parse_mode="HTML")
     if not tareas:
         await message.answer("🎉 No hay tareas pendientes.")
         return
@@ -153,13 +156,13 @@ async def comando_hoy(message: types.Message):
         await message.answer("✨ ¡Excelente! No tienes nada que venza en las próximas 24 horas.")
         return
 
-    mensaje = "🚨 **URGENTE: Vence en las próximas 24 horas:**\n\n"
+    mensaje = "🚨 <b>URGENTE: Vence en las próximas 24 horas:</b>\n\n"
     for tarea, fecha_local in urgentes:
-        mensaje += f"🔹 *{tarea['materia']}*\n"
-        mensaje += f"📝 {tarea['titulo']}\n"
+        mensaje += f"🔹 <b>{escape(tarea['materia'])}</b>\n"
+        mensaje += f"📝 {escape(tarea['titulo'])}\n"
         mensaje += f"⏳ Límite: {fecha_local.strftime('%H:%M')} hrs\n\n"
 
-    await message.answer(mensaje, parse_mode="Markdown")
+    await message.answer(mensaje, parse_mode="HTML")
 
 # --- BOTÓN DE CHECKLIST ---
 @dp.callback_query(F.data.startswith("done_"))
@@ -170,8 +173,9 @@ async def callback_marcar_entregado(callback: types.CallbackQuery):
     marcar_tarea_entregada(telegram_id, uid_tarea)
     
     await callback.message.edit_text(
-        callback.message.text + "\n\n✅ *¡Completado y archivado!*", 
-        parse_mode="Markdown", 
+        # html_text conserva el formato original (y lo escapa); .text lo perdería
+        callback.message.html_text + "\n\n✅ <b>¡Completado y archivado!</b>",
+        parse_mode="HTML",
         reply_markup=None
     )
     await callback.answer("¡Tarea guardada como entregada!")
@@ -190,18 +194,18 @@ async def comando_estado(message: types.Message):
     try:
         response = requests.get(enlace, timeout=5)
         if response.status_code == 200:
-            await message.answer("🟢 **Estado:** Tu enlace de Moodle responde correctamente. Sincronización activa.")
+            await message.answer("🟢 <b>Estado:</b> Tu enlace de Moodle responde correctamente. Sincronización activa.", parse_mode="HTML")
         else:
-            await message.answer(f"🔴 **Estado:** Moodle respondió con código de error `{response.status_code}`.", parse_mode="Markdown")
+            await message.answer(f"🔴 <b>Estado:</b> Moodle respondió con código de error <code>{response.status_code}</code>.", parse_mode="HTML")
     except Exception:
-        await message.answer("❌ **Estado:** No se pudo contactar con el servidor de Moodle.")
+        await message.answer("❌ <b>Estado:</b> No se pudo contactar con el servidor de Moodle.", parse_mode="HTML")
 
 # --- COMANDO /OLVIDAR ---
 @dp.message(F.text == "/olvidar")
 async def comando_olvidar(message: types.Message):
     telegram_id = message.from_user.id
     if eliminar_usuario(telegram_id):
-        await message.answer("🗑️ **Datos borrados.** Tu ID, enlace cifrado y registros fueron eliminados.")
+        await message.answer("🗑️ <b>Datos borrados.</b> Tu ID, enlace cifrado y registros fueron eliminados.", parse_mode="HTML")
     else:
         await message.answer("⚠️ No tenías datos registrados previamente.")
 
@@ -214,11 +218,11 @@ async def comando_stats(message: types.Message):
 
     stats = obtener_estadisticas()
     await message.answer(
-        f"📊 **Estadísticas del Servidor:**\n\n"
-        f"👤 Usuarios registrados: `{stats['usuarios']}`\n"
-        f"📚 Materias en catálogo: `{stats['materias']}`\n"
-        f"✅ Tareas completadas globalmente: `{stats['entregas']}`",
-        parse_mode="Markdown"
+        f"📊 <b>Estadísticas del Servidor:</b>\n\n"
+        f"👤 Usuarios registrados: <code>{stats['usuarios']}</code>\n"
+        f"📚 Materias en catálogo: <code>{stats['materias']}</code>\n"
+        f"✅ Tareas completadas globalmente: <code>{stats['entregas']}</code>",
+        parse_mode="HTML"
     )
 
 # --- ARRANQUE Y SCHEDULER ---
