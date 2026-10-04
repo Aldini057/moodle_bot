@@ -1,3 +1,13 @@
+"""Bot de Telegram que muestra las tareas pendientes del Moodle del CUGDL.
+
+Cada usuario registra con /start el enlace de exportación de su calendario
+de Moodle. El bot lo guarda cifrado y lo consulta para listar las entregas
+próximas. Este es el punto de entrada: define los comandos, inicializa la
+base de datos, arranca el planificador de alertas y hace polling a Telegram.
+
+Las funciones de database.py y moodle.py son bloqueantes; aquí siempre se
+llaman con asyncio.to_thread() para no congelar el bot.
+"""
 import asyncio
 import logging
 import os
@@ -13,12 +23,13 @@ from database import (
     obtener_estadisticas, marcar_tarea_entregada, obtener_cache
 )
 from moodle import obtener_tareas_pendientes
-from scheduler import iniciar_scheduler  # <-- Importamos nuestro nuevo motor automático
+from scheduler import iniciar_scheduler
 
 # Configuración de logs
 logging.basicConfig(level=logging.INFO)
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+# ID de Telegram del administrador (para /stats). 0 = sin configurar.
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 bot = Bot(token=TOKEN)
@@ -47,6 +58,10 @@ def obtener_tareas_con_cache(enlace, telegram_id):
 # --- COMANDO START ---
 @dp.message(CommandStart())
 async def comando_start(message: types.Message):
+    """/start: da la bienvenida o, con un enlace como argumento, lo registra.
+
+    Uso: /start https://mi.cugdl.udg.mx/calendar/export_secure.php?...
+    """
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         usuario_existente = await asyncio.to_thread(obtener_usuario, message.from_user.id)
@@ -75,6 +90,11 @@ async def comando_start(message: types.Message):
 # --- COMANDO /PENDIENTES ---
 @dp.message(F.text == "/pendientes")
 async def comando_pendientes(message: types.Message):
+    """/pendientes: un mensaje por tarea de los próximos 14 días.
+
+    Cada mensaje lleva un botón para marcar la tarea como entregada. Si Moodle
+    no responde, muestra la última copia guardada e indica de cuándo es.
+    """
     telegram_id = message.from_user.id
     enlace = await asyncio.to_thread(obtener_usuario, telegram_id)
 
@@ -122,6 +142,7 @@ async def comando_pendientes(message: types.Message):
 # --- COMANDO /HOY ---
 @dp.message(F.text == "/hoy")
 async def comando_hoy(message: types.Message):
+    """/hoy: resumen de lo que cierra o vence en las próximas 24 horas."""
     telegram_id = message.from_user.id
     enlace = await asyncio.to_thread(obtener_usuario, telegram_id)
 
@@ -167,6 +188,10 @@ async def comando_hoy(message: types.Message):
 # --- BOTÓN DE CHECKLIST ---
 @dp.callback_query(F.data.startswith("done_"))
 async def callback_marcar_entregado(callback: types.CallbackQuery):
+    """Botón "Marcar como Entregado": guarda la tarea y la oculta en adelante.
+
+    El callback_data tiene la forma "done_<uid de la tarea>".
+    """
     uid_tarea = callback.data.split("_")[1]
     telegram_id = callback.from_user.id
 
@@ -183,6 +208,7 @@ async def callback_marcar_entregado(callback: types.CallbackQuery):
 # --- COMANDO /ESTADO ---
 @dp.message(F.text == "/estado")
 async def comando_estado(message: types.Message):
+    """/estado: comprueba si el enlace de Moodle del usuario responde."""
     telegram_id = message.from_user.id
     enlace = await asyncio.to_thread(obtener_usuario, telegram_id)
 
@@ -203,6 +229,7 @@ async def comando_estado(message: types.Message):
 # --- COMANDO /OLVIDAR ---
 @dp.message(F.text == "/olvidar")
 async def comando_olvidar(message: types.Message):
+    """/olvidar: borra todos los datos del usuario (enlace, entregas, caché y alertas)."""
     telegram_id = message.from_user.id
     if await asyncio.to_thread(eliminar_usuario, telegram_id):
         await message.answer("🗑️ <b>Datos borrados.</b> Tu ID, enlace cifrado y registros fueron eliminados.", parse_mode="HTML")
@@ -212,6 +239,10 @@ async def comando_olvidar(message: types.Message):
 # --- COMANDO /STATS ---
 @dp.message(F.text == "/stats")
 async def comando_stats(message: types.Message):
+    """/stats: estadísticas globales, solo para ADMIN_ID.
+
+    Si ADMIN_ID no está configurado (vale 0), cualquiera puede usarlo.
+    """
     if message.from_user.id != ADMIN_ID and ADMIN_ID != 0:
         await message.answer("⛔ Comando no autorizado.")
         return
@@ -227,6 +258,7 @@ async def comando_stats(message: types.Message):
 
 # --- ARRANQUE Y SCHEDULER ---
 async def main():
+    """Inicializa la base de datos, arranca las alertas y empieza a recibir mensajes."""
     print("Inicializando base de datos...")
     if not init_db():
         # Salimos con error para que Docker reinicie el contenedor, en vez de

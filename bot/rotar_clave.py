@@ -9,6 +9,7 @@ from cryptography.fernet import InvalidToken
 from database import get_db_connection, cipher
 
 def rotar_enlaces():
+    """Re-cifra cada enlace de la tabla usuarios con la llave FERNET_KEY actual."""
     conn = get_db_connection()
     if not conn:
         print("❌ Error de conexión a la base de datos.")

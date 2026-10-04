@@ -1,3 +1,4 @@
+"""Lectura y filtrado del calendario iCal exportado por Moodle."""
 import requests
 from icalendar import Calendar
 from datetime import datetime, timezone, timedelta
@@ -5,6 +6,17 @@ import logging
 from database import buscar_nombre_materia, obtener_tareas_entregadas, guardar_cache
 
 def obtener_tareas_pendientes(moodle_url, telegram_id):
+    """Descarga el calendario del usuario y devuelve sus tareas próximas.
+
+    Incluye los eventos que terminan en los próximos 14 días, excepto los de
+    asistencia y los que el usuario ya marcó como entregados. Cada tarea es un
+    dict con: uid, titulo, materia, descripcion, fecha (ISO 8601 con zona
+    horaria) y tipo_evento ("abre", "cierra" o "vence"). La lista va ordenada
+    por fecha y se guarda también como caché.
+
+    Devuelve None si Moodle no respondió o el calendario no se pudo procesar
+    (para distinguirlo de una lista vacía: "no hay tareas").
+    """
     try:
         response = requests.get(moodle_url, timeout=10)
         if response.status_code != 200:

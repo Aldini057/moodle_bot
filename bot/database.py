@@ -1,3 +1,19 @@
+"""Acceso a PostgreSQL y cifrado de los enlaces de Moodle.
+
+Cada función abre su propia conexión y la cierra al terminar. Son funciones
+síncronas (psycopg2): desde código async hay que llamarlas con
+asyncio.to_thread() para no bloquear el bot.
+
+Tablas:
+    usuarios           telegram_id -> enlace de calendario cifrado con Fernet.
+    materias_cugdl     clave numérica de Moodle -> nombre oficial (ver seed.py).
+    tareas_entregadas  tareas que el usuario marcó como entregadas.
+    alertas_enviadas   avisos de "vence en 24 h" ya enviados, para no repetirlos.
+    cache_calendario   última lectura correcta del calendario, por si Moodle cae.
+
+Variables de entorno: DB_NAME, DB_USER, DB_PASSWORD, FERNET_KEY (obligatoria)
+y FERNET_KEY_ANTERIOR (opcional, solo al rotar la llave).
+"""
 import psycopg2
 import os
 import logging
@@ -22,6 +38,10 @@ if key_anterior:
 cipher = MultiFernet(llaves)
 
 def get_db_connection():
+    """Abre una conexión nueva a la base de datos del servicio "db".
+
+    Devuelve None (y lo registra en el log) si no se pudo conectar.
+    """
     try:
         return psycopg2.connect(
             host="db",
@@ -34,6 +54,10 @@ def get_db_connection():
         return None
 
 def init_db():
+    """Crea las tablas si no existen.
+
+    Devuelve True si se inicializó, False si no hubo conexión.
+    """
     conn = get_db_connection()
     if conn:
         cursor = conn.cursor()
@@ -55,7 +79,7 @@ def init_db():
             )
         ''')
 
-        # 3. NUEVA: Tabla de Tareas Entregadas (Check-list)
+        # 3. Tabla de Tareas Entregadas (Check-list)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS tareas_entregadas (
                 telegram_id BIGINT,
@@ -65,7 +89,7 @@ def init_db():
             )
         ''')
 
-        # 5. Alertas automáticas ya enviadas (para no repetir ni saltarse avisos)
+        # 4. Alertas automáticas ya enviadas (para no repetir ni saltarse avisos)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS alertas_enviadas (
                 telegram_id BIGINT,
@@ -76,7 +100,7 @@ def init_db():
             )
         ''')
 
-        # 4. NUEVA: Tabla de Caché (Resiliencia si Moodle se cae)
+        # 5. Tabla de Caché (Resiliencia si Moodle se cae)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS cache_calendario (
                 telegram_id BIGINT PRIMARY KEY,
@@ -93,6 +117,10 @@ def init_db():
 
 # --- FUNCIONES DE USUARIO Y CIFRADO ---
 def registrar_usuario(telegram_id, moodle_url):
+    """Guarda (o reemplaza) el enlace de calendario del usuario, cifrado.
+
+    Devuelve False si no hubo conexión a la base de datos.
+    """
     # Encriptamos el enlace antes de guardarlo (Seguridad Data at Rest)
     url_cifrada = cipher.encrypt(moodle_url.encode('utf-8')).decode('utf-8')
     
@@ -111,6 +139,11 @@ def registrar_usuario(telegram_id, moodle_url):
     return False
 
 def obtener_usuario(telegram_id):
+    """Devuelve el enlace de calendario descifrado del usuario, o None.
+
+    Si el valor guardado es una URL en texto plano (registros anteriores al
+    cifrado), la re-cifra en la base de datos y la devuelve.
+    """
     conn = get_db_connection()
     if conn:
         cursor = conn.cursor()
@@ -169,6 +202,12 @@ def obtener_todos_los_usuarios():
 
 # --- FUNCIONES DE MATERIAS ---
 def buscar_nombre_materia(clave_moodle):
+    """Traduce la categoría de Moodle a su nombre oficial.
+
+    Busca la primera clave de 6 dígitos (p. ej. "225126") en el catálogo
+    materias_cugdl. Si no hay clave o no está en el catálogo, devuelve el
+    texto original.
+    """
     match = re.search(r'(\d{6})', clave_moodle)
     if not match: return clave_moodle 
     id_numerico = match.group(1)
@@ -185,6 +224,7 @@ def buscar_nombre_materia(clave_moodle):
 
 # --- FUNCIONES DE CHECKLIST (Entregados) ---
 def marcar_tarea_entregada(telegram_id, id_tarea):
+    """Marca la tarea (por su UID de iCal) como entregada; deja de mostrarse."""
     conn = get_db_connection()
     if conn:
         cursor = conn.cursor()
@@ -200,6 +240,7 @@ def marcar_tarea_entregada(telegram_id, id_tarea):
     return False
 
 def obtener_tareas_entregadas(telegram_id):
+    """Lista de UIDs de tareas que el usuario marcó como entregadas."""
     conn = get_db_connection()
     if conn:
         cursor = conn.cursor()
@@ -240,6 +281,7 @@ def registrar_alertas(telegram_id, alertas):
 
 # --- FUNCIONES DE CACHÉ ---
 def guardar_cache(telegram_id, datos_json):
+    """Guarda la lista de tareas como la última copia válida del calendario."""
     json_str = json.dumps(datos_json)
     conn = get_db_connection()
     if conn:
@@ -256,6 +298,10 @@ def guardar_cache(telegram_id, datos_json):
         conn.close()
 
 def obtener_cache(telegram_id):
+    """Devuelve (tareas, fecha) de la última copia guardada, o (None, None).
+
+    La fecha es un datetime sin zona horaria, en UTC.
+    """
     conn = get_db_connection()
     if conn:
         cursor = conn.cursor()
@@ -271,6 +317,7 @@ def obtener_cache(telegram_id):
 
 # --- MODO ADMIN ---
 def obtener_estadisticas():
+    """Conteos globales de usuarios, materias del catálogo y entregas (para /stats)."""
     conn = get_db_connection()
     stats = {"usuarios": 0, "materias": 0, "entregas": 0}
     if conn:

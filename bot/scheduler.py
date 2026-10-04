@@ -1,3 +1,4 @@
+"""Revisión automática en segundo plano: avisa de tareas que vencen pronto."""
 import asyncio
 import logging
 from html import escape
@@ -11,10 +12,17 @@ from database import (
 from moodle import obtener_tareas_pendientes
 
 def iniciar_scheduler(bot):
+    """Arranca la revisión periódica de alertas en el bucle de eventos actual.
+
+    Cada hora (y una vez al arrancar) descarga el calendario de cada usuario y
+    le envía un mensaje con las tareas que vencen en menos de 24 horas y que
+    aún no se le habían avisado. Debe llamarse con el bucle de asyncio ya
+    corriendo (desde main()).
+    """
     scheduler = AsyncIOScheduler(timezone="America/Mexico_City")
 
-    # Función que evaluará las tareas de todos los usuarios
     async def verificar_alertas_automaticas():
+        """Revisa a todos los usuarios y envía las alertas pendientes."""
         logging.info("🤖 Ejecutando revisión automática de tareas en segundo plano...")
         usuarios = await asyncio.to_thread(obtener_todos_los_usuarios)
         

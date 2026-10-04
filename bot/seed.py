@@ -1,7 +1,15 @@
+"""Carga el catálogo de materias (materias_raw.txt) en la tabla materias_cugdl.
+
+Se ejecuta a mano, desde la raíz del proyecto:
+    docker compose exec bot python bot/seed.py
+
+Es idempotente: las claves que ya existen se ignoran.
+"""
 import re
 from database import get_db_connection, init_db
 
 def poblar_base_de_datos():
+    """Lee las líneas "Nombre (123456)" del archivo y las inserta en la tabla."""
     print("Inicializando tablas...")
     init_db()
     
