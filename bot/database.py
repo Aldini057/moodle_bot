@@ -3,13 +3,23 @@ import os
 import logging
 import re
 import json
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, MultiFernet, InvalidToken
 
-# Llave de cifrado simétrico (AES)
-# En producción, puedes poner tu propia llave generada en el archivo .env como FERNET_KEY
+# Llave de cifrado simétrico (AES). Es obligatoria: sin ella no arrancamos,
+# para no volver a cifrar con una llave pública escrita en el código.
 key_env = os.getenv("FERNET_KEY")
-FERNET_KEY = key_env.encode() if key_env else b"q1w2e3r4t5y6u7i8o9p0q1w2e3r4t5y6u7i8o9p0q1w="
-cipher = Fernet(FERNET_KEY)
+if not key_env:
+    raise RuntimeError(
+        "Falta FERNET_KEY en el entorno. Genera una con: "
+        "python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+    )
+
+# La primera llave cifra; las demás solo descifran (útil al rotar la llave).
+llaves = [Fernet(key_env.encode())]
+key_anterior = os.getenv("FERNET_KEY_ANTERIOR")
+if key_anterior:
+    llaves.append(Fernet(key_anterior.encode()))
+cipher = MultiFernet(llaves)
 
 def get_db_connection():
     try:
@@ -102,11 +112,18 @@ def obtener_usuario(telegram_id):
                 # Intentamos desencriptar
                 url_descifrada = cipher.decrypt(url_guardada.encode('utf-8')).decode('utf-8')
                 return url_descifrada
-            except Exception:
-                # Si falla, significa que es tu enlace viejo guardado en texto plano.
-                # Lo retornamos pero lo re-encriptamos en la BD para sanearlo automáticamente.
-                registrar_usuario(telegram_id, url_guardada)
-                return url_guardada
+            except InvalidToken:
+                if url_guardada.startswith(("http://", "https://")):
+                    # Enlace viejo guardado en texto plano: lo re-encriptamos para sanearlo.
+                    registrar_usuario(telegram_id, url_guardada)
+                    return url_guardada
+                # Está cifrado con una llave que no tenemos. No lo tocamos: re-cifrarlo
+                # como si fuera texto plano destruiría el enlace original.
+                logging.error(
+                    f"No se pudo descifrar el enlace del usuario {telegram_id}. "
+                    "¿Cambiaste FERNET_KEY sin definir FERNET_KEY_ANTERIOR?"
+                )
+                return None
     return None
 
 def eliminar_usuario(telegram_id):
